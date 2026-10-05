@@ -837,13 +837,13 @@
         </div>
     </div>
 
-    <!-- New Sale Modal -->
+    <!-- New / Edit Sale Modal -->
     <div id="newSaleModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4 overflow-y-auto">
         <div class="bg-white w-full max-w-xl rounded-2xl shadow-2xl border border-amber-400 overflow-hidden my-8">
             <div class="bg-slate-900 text-amber-300 p-4 sm:p-5 flex justify-between items-center border-b border-amber-500/40">
                 <div class="flex items-center space-x-2">
                     <i class="fa-solid fa-crown text-amber-400"></i>
-                    <h3 class="font-serif font-bold text-lg">Input Transaksi Penjualan RP Viral</h3>
+                    <h3 id="saleModalTitle" class="font-serif font-bold text-lg">Input Transaksi Penjualan RP Viral</h3>
                 </div>
                 <button onclick="closeModal('newSaleModal')" class="text-slate-400 hover:text-white">
                     <i class="fa-solid fa-xmark text-xl"></i>
@@ -851,6 +851,8 @@
             </div>
             
             <form id="saleForm" onsubmit="handleSaveSale(event)" class="p-5 space-y-4 text-xs sm:text-sm">
+                <input type="hidden" id="saleId" value="">
+
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <label class="block font-semibold text-slate-700 mb-1">Tanggal Transaksi</label>
@@ -1633,10 +1635,34 @@
         function openNewSaleModal() {
             populateProductSelectOptions();
             document.getElementById('saleForm').reset();
+            document.getElementById('saleId').value = '';
             const todayStr = new Date().toISOString().split('T')[0];
             document.getElementById('saleDate').value = todayStr;
+            document.getElementById('saleModalTitle').innerText = 'Input Transaksi Penjualan RP Viral';
             
             updateSalePriceHint();
+            openModal('newSaleModal');
+        }
+
+        function openEditSaleModal(saleId) {
+            const sale = sales.find(s => s.id === saleId);
+            if (!sale) return;
+
+            populateProductSelectOptions();
+            document.getElementById('saleId').value = sale.id;
+            document.getElementById('saleDate').value = sale.date || new Date().toISOString().split('T')[0];
+            document.getElementById('saleCustomer').value = sale.customer || '';
+            document.getElementById('salePhone').value = sale.phone || '';
+            document.getElementById('saleProductSelect').value = sale.productId;
+            document.getElementById('saleQty').value = sale.qty;
+            document.getElementById('saleUnitPrice').value = sale.unitPrice;
+            document.getElementById('saleDiscount').value = sale.discount || 0;
+            document.getElementById('salePaymentMethod').value = sale.method;
+            document.getElementById('saleStatus').value = sale.status;
+
+            document.getElementById('saleModalTitle').innerText = 'Edit Transaksi Penjualan RP Viral';
+
+            calculateSaleTotal();
             openModal('newSaleModal');
         }
 
@@ -1668,6 +1694,7 @@
 
         function handleSaveSale(e) {
             e.preventDefault();
+            const saleId = document.getElementById('saleId').value;
             const saleDateInput = document.getElementById('saleDate').value;
             const saleDate = saleDateInput || new Date().toISOString().split('T')[0];
             const customer = document.getElementById('saleCustomer').value.trim();
@@ -1679,42 +1706,77 @@
             const method = document.getElementById('salePaymentMethod').value;
             const status = document.getElementById('saleStatus').value;
 
-            const prod = products.find(p => p.id === prodId);
-            if (!prod) return;
+            const newProd = products.find(p => p.id === prodId);
+            if (!newProd) return;
 
-            if (prod.stock < qty) {
-                showToast(`Stok ${prod.name} tidak mencukupi (Sisa: ${prod.stock})`, 'error');
-                return;
+            if (saleId) {
+                // Edit existing transaction
+                const existingSale = sales.find(s => s.id === saleId);
+                if (!existingSale) return;
+
+                const oldProd = products.find(p => p.id === existingSale.productId);
+                if (oldProd) {
+                    oldProd.stock += existingSale.qty; // Revert previous qty to stock
+                }
+
+                if (newProd.stock < qty) {
+                    // Revert old stock if new qty unavailable
+                    if (oldProd) oldProd.stock -= existingSale.qty;
+                    showToast(`Stok ${newProd.name} tidak mencukupi (Sisa: ${newProd.stock})`, 'error');
+                    return;
+                }
+
+                newProd.stock -= qty;
+
+                existingSale.date = saleDate;
+                existingSale.customer = customer;
+                existingSale.phone = phone;
+                existingSale.productId = newProd.id;
+                existingSale.productName = newProd.name;
+                existingSale.qty = qty;
+                existingSale.unitPrice = unitPrice;
+                existingSale.discount = discount;
+                existingSale.total = Math.max(0, (qty * unitPrice) - discount);
+                existingSale.method = method;
+                existingSale.status = status;
+
+                showToast('Transaksi penjualan berhasil diperbarui!');
+            } else {
+                // Add new transaction
+                if (newProd.stock < qty) {
+                    showToast(`Stok ${newProd.name} tidak mencukupi (Sisa: ${newProd.stock})`, 'error');
+                    return;
+                }
+
+                newProd.stock -= qty;
+                const total = Math.max(0, (qty * unitPrice) - discount);
+                const newInvNo = `INV-2026-${String(sales.length + 1).padStart(3, '0')}`;
+
+                const newSale = {
+                    id: 'inv-' + Date.now(),
+                    invoiceNo: newInvNo,
+                    date: saleDate,
+                    customer: customer,
+                    phone: phone,
+                    productId: newProd.id,
+                    productName: newProd.name,
+                    qty: qty,
+                    unitPrice: unitPrice,
+                    discount: discount,
+                    total: total,
+                    method: method,
+                    status: status
+                };
+
+                sales.unshift(newSale);
+                showToast('Transaksi penjualan berhasil disimpan!');
             }
 
-            prod.stock -= qty;
             localStorage.setItem('rp_products', JSON.stringify(products));
-
-            const total = Math.max(0, (qty * unitPrice) - discount);
-            const newInvNo = `INV-2026-${String(sales.length + 1).padStart(3, '0')}`;
-
-            const newSale = {
-                id: 'inv-' + Date.now(),
-                invoiceNo: newInvNo,
-                date: saleDate,
-                customer: customer,
-                phone: phone,
-                productId: prod.id,
-                productName: prod.name,
-                qty: qty,
-                unitPrice: unitPrice,
-                discount: discount,
-                total: total,
-                method: method,
-                status: status
-            };
-
-            sales.unshift(newSale);
             localStorage.setItem('rp_sales', JSON.stringify(sales));
 
             closeModal('newSaleModal');
             refreshUI();
-            showToast('Transaksi penjualan berhasil disimpan!');
         }
 
         function deleteSale(id) {
@@ -2536,9 +2598,14 @@
                     </td>
                     <td class="p-3.5 text-center">
                         ${isAdmin ? `
-                            <button onclick="deleteSale('${item.id}')" class="text-rose-400 hover:text-rose-600 p-1" title="Hapus Transaksi">
-                                <i class="fa-solid fa-trash-can"></i>
-                            </button>
+                            <div class="flex items-center justify-center space-x-2">
+                                <button onclick="openEditSaleModal('${item.id}')" class="text-slate-400 hover:text-pink-600 p-1" title="Edit Transaksi">
+                                    <i class="fa-solid fa-pen-to-square"></i>
+                                </button>
+                                <button onclick="deleteSale('${item.id}')" class="text-rose-400 hover:text-rose-600 p-1" title="Hapus Transaksi">
+                                    <i class="fa-solid fa-trash-can"></i>
+                                </button>
+                            </div>
                         ` : `<span class="text-[10px] text-slate-400 font-medium">-</span>`}
                     </td>
                 </tr>
